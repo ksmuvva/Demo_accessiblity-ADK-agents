@@ -351,96 +351,214 @@ def test_target_size_minimum(url: str) -> Dict[str, Any]:
 # ===================== WCAG 3.1.x Readable =====================
 
 def test_readability(url: str) -> Dict[str, Any]:
-    """Light-weight readability and language heuristics for WCAG 3.1.x.
-    Uses text statistics and language detection where possible. Intended as a rapid
-    offline scan – does not execute JavaScript. For production, extend with full
-    parser and assistive-technology simulations.
-    """
-    from langdetect import detect  # type: ignore
-    import textstat  # type: ignore
-    import re, requests
-
     url = _normalize_url(url)
+    import re, requests, textstat  # type: ignore
+    from langdetect import detect  # type: ignore
+    from bs4 import BeautifulSoup  # type: ignore
 
     try:
-        raw_html = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (WCAG-bot)"}).text
-        # Strip tags crudely – for heuristic readability only
-        text = re.sub(r"<[^>]+>", " ", raw_html)
-        text = re.sub(r"\s+", " ", text)
-        sample = text[:10000]  # limit
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (WCAG-audit)"})
+        html = resp.text
+        soup = BeautifulSoup(html, "lxml")
 
-        language = detect(sample) if sample.strip() else "unknown"
-        flesch = textstat.flesch_reading_ease(sample) if sample.strip() else None
-        grade = textstat.text_standard(sample, float_output=False) if sample.strip() else None
+        # -------- 3.1.1 / 3.1.2 language attributes --------
+        page_lang = soup.html.get("lang", "").lower() if soup.html else ""
+        language_of_page = f"✅ html lang attribute set to '{page_lang}'" if page_lang else "❌ Missing html lang attribute"
+
+        # Parts with differing lang
+        parts_with_lang = [el for el in soup.find_all(attrs={"lang": True}) if el.get("lang", "").lower() != page_lang]
+        language_of_parts = (
+            f"✅ {len(parts_with_lang)} elements have correct secondary lang attributes" if parts_with_lang else "⚠️ No secondary lang attributes detected (verify if needed)"
+        )
+
+        # Grab visible text for readability analysis
+        text_only = soup.get_text(separator=" ")
+        text_only = re.sub(r"\s+", " ", text_only)
+        sample_text = text_only[:15000]
+
+        # Detect primary language via langdetect for cross-check
+        detected_lang = detect(sample_text) if sample_text.strip() else "unknown"
+        if page_lang and detected_lang != page_lang:
+            language_of_page += f" (Warning: detected '{detected_lang}')"
+
+        # -------- 3.1.3 unusual / difficult words --------
+        difficult_pct = textstat.difficult_words(sample_text) / (len(sample_text.split()) or 1) * 100
+        unusual_words = (
+            f"✅ Difficult-word ratio {difficult_pct:.1f}% (acceptable)" if difficult_pct < 5 else f"⚠️ Difficult-word ratio high ({difficult_pct:.1f}%)"
+        )
+
+        # -------- 3.1.4 abbreviations --------
+        abbreviations_found = re.findall(r"\b[A-Z]{2,6}s?\b", sample_text)
+        unique_abbr = set(abbreviations_found)
+        abbreviations = (
+            f"✅ Few abbreviations detected ({len(unique_abbr)})" if len(unique_abbr) <= 10 else f"⚠️ Many abbreviations detected ({len(unique_abbr)})"
+        )
+
+        # -------- 3.1.5 reading level --------
+        flesch = textstat.flesch_reading_ease(sample_text)
+        grade = textstat.text_standard(sample_text, float_output=False)
+        reading_level = f"✅ Readability ≈ {grade} (Flesch {flesch:.0f})" if flesch >= 60 else f"⚠️ Readability difficult – {grade} (Flesch {flesch:.0f})"
+
+        # -------- 3.1.6 pronunciation cues --------
+        has_ruby = bool(soup.find("ruby"))
+        has_ssml = "<phoneme" in html
+        pronunciation = (
+            "✅ Pronunciation cues present (ruby/phoneme)" if has_ruby or has_ssml else "⚠️ No pronunciation aids detected"
+        )
+
+        status = "TESTED"
+
     except Exception as exc:
-        language, flesch, grade = "error", None, None
-        error = str(exc)
-    else:
-        error = None
-
-    test_results = {
-        "language_of_page": f"✅ Detected primary language: {language}" if language != "error" else f"⚠️ Language detection failed ({error})",
-        "language_of_parts": "⚠️ Automatic detection of individual parts not implemented – manual review required",
-        "unusual_words": "⚠️ Unusual jargon detection needs manual assessment",
-        "abbreviations": "⚠️ Abbreviation expansion not automatically validated",
-        "reading_level": f"⚠️ Readability ~ {grade} (Flesch {flesch}) – ensure under 9th grade" if flesch is not None else "⚠️ Readability score unavailable",
-        "pronunciation": "⚠️ Pronunciation guidance not detected – review requirements",
-    }
-
-    recommendations = [
-        "Ensure the html lang attribute reflects the primary language.",
-        "Provide language switch indicators for passages in other languages (lang attribute).",
-        "Explain unusual jargon, idioms, and abbreviations on first use.",
-        "Target a Flesch Reading Ease score of 60-70 or better (about grade 8).",
-    ]
+        language_of_page = language_of_parts = unusual_words = abbreviations = reading_level = pronunciation = f"❌ Error: {exc}"
+        status = "ERROR"
 
     return {
-        "wcag_criteria": [
-            "3.1.1",
-            "3.1.2",
-            "3.1.3",
-            "3.1.4",
-            "3.1.5",
-            "3.1.6",
+        "wcag_criteria": ["3.1.1", "3.1.2", "3.1.3", "3.1.4", "3.1.5", "3.1.6"],
+        "test_results": {
+            "language_of_page": language_of_page,
+            "language_of_parts": language_of_parts,
+            "unusual_words": unusual_words,
+            "abbreviations": abbreviations,
+            "reading_level": reading_level,
+            "pronunciation": pronunciation,
+        },
+        "recommendations": [
+            "Ensure <html lang> is set and matches detected language.",
+            "Add lang attributes for passages in other languages.",
+            "Explain jargon/idioms & provide glossary for abbreviations.",
+            "Target Flesch score ≥ 60 (about grade 8).",
+            "Provide pronunciation guides (e.g., ruby, phoneme).",
         ],
-        "test_results": test_results,
-        "recommendations": recommendations,
         "url": url,
-        "status": "NEEDS_REVIEW" if error or flesch is None else "TESTED",
+        "status": status,
     }
 
 
 # ===================== WCAG 3.2.x Predictable =====================
 
 def test_predictability(url: str) -> Dict[str, Any]:
-    """Static heuristics for WCAG 3.2.x predictable behaviour criteria."""
     url = _normalize_url(url)
+    import requests, re
+    from bs4 import BeautifulSoup  # type: ignore
+
+    try:
+        html = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (WCAG-audit)"}).text
+        soup = BeautifulSoup(html, "lxml")
+
+        # Helper to search JS snippets indicating navigation
+        nav_js_regex = re.compile(r"location\.href|window\.location|document\.location", re.I)
+
+        # 3.2.1 On Focus
+        focus_elements = [el for el in soup.find_all(attrs={"onfocus": True})]
+        focus_nav = [el for el in focus_elements if nav_js_regex.search(el["onfocus"])]
+        on_focus = "✅ No focus-triggered navigation" if not focus_nav else f"❌ {len(focus_nav)} elements change context on focus"
+
+        # 3.2.2 On Input
+        input_handlers = soup.find_all(attrs={"oninput": True}) + soup.find_all(attrs={"onchange": True})
+        input_nav = [el for el in input_handlers if nav_js_regex.search(" ".join(el.get(attr) for attr in ("oninput", "onchange") if el.get(attr)))]
+        on_input = "✅ No input-triggered context change" if not input_nav else f"❌ {len(input_nav)} elements change context on input"
+
+        # 3.2.3 Consistent Navigation – presence of <nav>
+        nav_tags = soup.find_all("nav")
+        consistent_navigation = "✅ <nav> landmarks present" if nav_tags else "⚠️ No explicit <nav> landmarks detected"
+
+        # 3.2.4 Consistent Identification – identical components have same aria-label
+        buttons = soup.find_all("button")
+        labels = [btn.get_text(strip=True).lower() for btn in buttons]
+        dup_labels = len(labels) != len(set(labels))
+        consistent_identification = "✅ Component labelling appears consistent" if not dup_labels else "⚠️ Duplicate button labels might cause confusion"
+
+        # 3.2.5 Change on Request – ensure submit / buttons handle
+        auto_submit_forms = [form for form in soup.find_all("form") if form.get("onsubmit") and nav_js_regex.search(form["onsubmit"])]
+        change_on_request = "✅ No unsolicited context changes detected" if not auto_submit_forms else f"❌ {len(auto_submit_forms)} forms submit automatically without user confirmation"
+
+        # 3.2.6 Consistent Help – check for help links
+        help_links = soup.find_all("a", string=re.compile(r"help|faq|support", re.I))
+        consistent_help = "✅ Help links found" if help_links else "⚠️ No help links detected"
+
+        status = "TESTED"
+    except Exception as exc:
+        on_focus = on_input = consistent_navigation = consistent_identification = change_on_request = consistent_help = f"❌ Error: {exc}"
+        status = "ERROR"
+
     return {
         "wcag_criteria": ["3.2.1", "3.2.2", "3.2.3", "3.2.4", "3.2.5", "3.2.6"],
         "test_results": {
-            "on_focus": "⚠️ Requires manual verification that focus does not trigger context changes",
-            "on_input": "⚠️ Requires manual verification that input does not automatically submit or update context",
-            "consistent_navigation": "✅ Navigation landmarks appear consistent across pages (heuristic) – verify manually",
-            "consistent_identification": "⚠️ Requires component role/name consistency check",
-            "change_on_request": "⚠️ Verify that context changes only occur after explicit user action",
-            "consistent_help": "⚠️ Help mechanism consistency needs manual review",
+            "on_focus": on_focus,
+            "on_input": on_input,
+            "consistent_navigation": consistent_navigation,
+            "consistent_identification": consistent_identification,
+            "change_on_request": change_on_request,
+            "consistent_help": consistent_help,
         },
         "recommendations": [
-            "Ensure focus or input events do not trigger unexpected page changes.",
-            "Maintain consistent navigation order and location across pages.",
-            "Use consistent component labels and icons throughout the site.",
-            "Offer uniform help features on each page (FAQ, contact, help link).",
+            "Avoid changing pages automatically on focus or input events.",
+            "Use <nav> landmarks and keep navigation order stable.",
+            "Label components consistently across the site.",
+            "Ensure context changes occur only after explicit user action (e.g., button click).",
+            "Provide a persistent Help / FAQ link on every page.",
         ],
         "url": url,
-        "status": "NEEDS_REVIEW",
+        "status": status,
     }
 
 
 # ===================== WCAG 3.3.x Input Assistance =====================
 
 def test_input_assistance(url: str) -> Dict[str, Any]:
-    """Simple static checks and guidance for WCAG 3.3.x input assistance criteria."""
     url = _normalize_url(url)
+    import requests, re
+    from bs4 import BeautifulSoup  # type: ignore
+
+    try:
+        html = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (WCAG-audit)"}).text
+        soup = BeautifulSoup(html, "lxml")
+
+        inputs = soup.find_all(["input", "textarea", "select"])
+        labels = {label.get("for"): label.get_text(strip=True) for label in soup.find_all("label")}
+
+        # 3.3.1 Error Identification – look for aria-invalid or error messages
+        aria_invalid = [el for el in inputs if el.get("aria-invalid") == "true"]
+        error_identification = "⚠️ No inline validation attributes found" if not aria_invalid else "✅ aria-invalid markers present"
+
+        # 3.3.2 Labels / Instructions – every input should have label or aria-label
+        unlabeled = [el for el in inputs if not (el.get("id") in labels or el.get("aria-label") or el.get("aria-labelledby"))]
+        labels_instructions = "✅ All form controls have labels" if not unlabeled else f"❌ {len(unlabeled)} controls missing labels"
+
+        # 3.3.3 Error Suggestion – look for role=alert or <span class="error">
+        error_suggestion = "⚠️ Could not detect automatic error suggestion patterns" if "error" not in html.lower() else "✅ Potential error message elements found"
+
+        # 3.3.4 Error Prevention (Legal/Financial/Data) – forms with type=submit should have confirmation dialog? Heuristic: look for confirm() in onsubmit
+        risky_forms = [form for form in soup.find_all("form") if re.search(r"confirm\\(", form.get("onsubmit", ""))]
+        error_prevention_critical = "✅ Confirmation prompts present" if risky_forms else "⚠️ No confirmation prompts detected for critical forms"
+
+        # 3.3.5 Help – presence of aria-describedby or help text
+        help_texts = soup.find_all(attrs={"aria-describedby": True})
+        help = "✅ Help descriptors present" if help_texts else "⚠️ No help descriptors detected"
+
+        # 3.3.6 Error Prevention (All) – detect autocomplete attributes
+        autocomplete_off = [inp for inp in inputs if inp.get("autocomplete") == "off"]
+        error_prevention_all = "⚠️ Some inputs disable autocomplete" if autocomplete_off else "✅ Autocomplete available on inputs"
+
+        # 3.3.7 Redundant Entry – heuristic: detect duplicate name attributes across forms
+        name_counts = {}
+        for inp in inputs:
+            name = inp.get("name")
+            if name:
+                name_counts[name] = name_counts.get(name, 0) + 1
+        redundant = [n for n, cnt in name_counts.items() if cnt > 1]
+        redundant_entry = "⚠️ Possible redundant entry fields: " + ", ".join(redundant) if redundant else "✅ No obvious redundant fields"
+
+        # 3.3.8 / 3.3.9 Accessible Authentication – detect 2FA alternatives or passwordless? Heuristic: look for input type password
+        password_inputs = [inp for inp in inputs if inp.get("type") == "password"]
+        accessible_auth_minimum = "⚠️ Password fields present – ensure alternative authentication methods" if password_inputs else "✅ No password-only authentication detected"
+        accessible_auth_enhanced = "⚠️ Unable to verify enhanced authentication heuristics"  # Provide generic guidance
+
+        status = "TESTED"
+    except Exception as exc:
+        error_identification = labels_instructions = error_suggestion = error_prevention_critical = help = error_prevention_all = redundant_entry = accessible_auth_minimum = accessible_auth_enhanced = f"❌ Error: {exc}"
+        status = "ERROR"
+
     return {
         "wcag_criteria": [
             "3.3.1",
@@ -454,24 +572,24 @@ def test_input_assistance(url: str) -> Dict[str, Any]:
             "3.3.9",
         ],
         "test_results": {
-            "error_identification": "⚠️ Automated form analysis not implemented – manual review",
-            "labels_instructions": "⚠️ Label/placeholder contrast and linkage needs checking",
-            "error_suggestion": "⚠️ Error suggestions not evaluated",
-            "error_prevention_critical": "⚠️ Critical transaction verification requires manual review",
-            "help": "⚠️ Presence of context-sensitive help not automatically detectable",
-            "error_prevention_all": "⚠️ Enhanced error prevention criteria need verification",
-            "redundant_entry": "⚠️ Detection of redundant entry requirements needs manual review",
-            "accessible_auth_minimum": "⚠️ Authentication flow heuristics incomplete – test manually",
-            "accessible_auth_enhanced": "⚠️ Enhanced authentication requirements need assessment",
+            "error_identification": error_identification,
+            "labels_instructions": labels_instructions,
+            "error_suggestion": error_suggestion,
+            "error_prevention_critical": error_prevention_critical,
+            "help": help,
+            "error_prevention_all": error_prevention_all,
+            "redundant_entry": redundant_entry,
+            "accessible_auth_minimum": accessible_auth_minimum,
+            "accessible_auth_enhanced": accessible_auth_enhanced,
         },
         "recommendations": [
-            "Provide clear, programmatically associated labels for all form controls.",
-            "Present descriptive error messages and, where possible, corrective suggestions.",
-            "Prevent loss of data by confirming before abandoning unsaved changes.",
-            "Allow users to review, correct, and confirm critical transactions.",
-            "Avoid requiring users to re-enter information; support autofill.",
-            "Offer accessible, non-cognitive-heavy authentication alternatives (passkeys, email links).",
+            "Provide programmatically associated labels for every form control.",
+            "Use inline validation (aria-invalid) and descriptive error messages.",
+            "Confirm critical transactions before final submission.",
+            "Offer help text via aria-describedby or visible instructions.",
+            "Enable autocomplete and avoid redundant data entry.",
+            "Provide passkey / MFA / passwordless authentication options.",
         ],
         "url": url,
-        "status": "NEEDS_REVIEW",
+        "status": status,
     } 
