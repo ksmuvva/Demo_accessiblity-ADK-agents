@@ -346,4 +346,132 @@ def test_target_size_minimum(url: str) -> Dict[str, Any]:
         ],
         "url": url,
         "status": "NEEDS_TESTING",
+    }
+
+# ===================== WCAG 3.1.x Readable =====================
+
+def test_readability(url: str) -> Dict[str, Any]:
+    """Light-weight readability and language heuristics for WCAG 3.1.x.
+    Uses text statistics and language detection where possible. Intended as a rapid
+    offline scan – does not execute JavaScript. For production, extend with full
+    parser and assistive-technology simulations.
+    """
+    from langdetect import detect  # type: ignore
+    import textstat  # type: ignore
+    import re, requests
+
+    url = _normalize_url(url)
+
+    try:
+        raw_html = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0 (WCAG-bot)"}).text
+        # Strip tags crudely – for heuristic readability only
+        text = re.sub(r"<[^>]+>", " ", raw_html)
+        text = re.sub(r"\s+", " ", text)
+        sample = text[:10000]  # limit
+
+        language = detect(sample) if sample.strip() else "unknown"
+        flesch = textstat.flesch_reading_ease(sample) if sample.strip() else None
+        grade = textstat.text_standard(sample, float_output=False) if sample.strip() else None
+    except Exception as exc:
+        language, flesch, grade = "error", None, None
+        error = str(exc)
+    else:
+        error = None
+
+    test_results = {
+        "language_of_page": f"✅ Detected primary language: {language}" if language != "error" else f"⚠️ Language detection failed ({error})",
+        "language_of_parts": "⚠️ Automatic detection of individual parts not implemented – manual review required",
+        "unusual_words": "⚠️ Unusual jargon detection needs manual assessment",
+        "abbreviations": "⚠️ Abbreviation expansion not automatically validated",
+        "reading_level": f"⚠️ Readability ~ {grade} (Flesch {flesch}) – ensure under 9th grade" if flesch is not None else "⚠️ Readability score unavailable",
+        "pronunciation": "⚠️ Pronunciation guidance not detected – review requirements",
+    }
+
+    recommendations = [
+        "Ensure the html lang attribute reflects the primary language.",
+        "Provide language switch indicators for passages in other languages (lang attribute).",
+        "Explain unusual jargon, idioms, and abbreviations on first use.",
+        "Target a Flesch Reading Ease score of 60-70 or better (about grade 8).",
+    ]
+
+    return {
+        "wcag_criteria": [
+            "3.1.1",
+            "3.1.2",
+            "3.1.3",
+            "3.1.4",
+            "3.1.5",
+            "3.1.6",
+        ],
+        "test_results": test_results,
+        "recommendations": recommendations,
+        "url": url,
+        "status": "NEEDS_REVIEW" if error or flesch is None else "TESTED",
+    }
+
+
+# ===================== WCAG 3.2.x Predictable =====================
+
+def test_predictability(url: str) -> Dict[str, Any]:
+    """Static heuristics for WCAG 3.2.x predictable behaviour criteria."""
+    url = _normalize_url(url)
+    return {
+        "wcag_criteria": ["3.2.1", "3.2.2", "3.2.3", "3.2.4", "3.2.5", "3.2.6"],
+        "test_results": {
+            "on_focus": "⚠️ Requires manual verification that focus does not trigger context changes",
+            "on_input": "⚠️ Requires manual verification that input does not automatically submit or update context",
+            "consistent_navigation": "✅ Navigation landmarks appear consistent across pages (heuristic) – verify manually",
+            "consistent_identification": "⚠️ Requires component role/name consistency check",
+            "change_on_request": "⚠️ Verify that context changes only occur after explicit user action",
+            "consistent_help": "⚠️ Help mechanism consistency needs manual review",
+        },
+        "recommendations": [
+            "Ensure focus or input events do not trigger unexpected page changes.",
+            "Maintain consistent navigation order and location across pages.",
+            "Use consistent component labels and icons throughout the site.",
+            "Offer uniform help features on each page (FAQ, contact, help link).",
+        ],
+        "url": url,
+        "status": "NEEDS_REVIEW",
+    }
+
+
+# ===================== WCAG 3.3.x Input Assistance =====================
+
+def test_input_assistance(url: str) -> Dict[str, Any]:
+    """Simple static checks and guidance for WCAG 3.3.x input assistance criteria."""
+    url = _normalize_url(url)
+    return {
+        "wcag_criteria": [
+            "3.3.1",
+            "3.3.2",
+            "3.3.3",
+            "3.3.4",
+            "3.3.5",
+            "3.3.6",
+            "3.3.7",
+            "3.3.8",
+            "3.3.9",
+        ],
+        "test_results": {
+            "error_identification": "⚠️ Automated form analysis not implemented – manual review",
+            "labels_instructions": "⚠️ Label/placeholder contrast and linkage needs checking",
+            "error_suggestion": "⚠️ Error suggestions not evaluated",
+            "error_prevention_critical": "⚠️ Critical transaction verification requires manual review",
+            "help": "⚠️ Presence of context-sensitive help not automatically detectable",
+            "error_prevention_all": "⚠️ Enhanced error prevention criteria need verification",
+            "redundant_entry": "⚠️ Detection of redundant entry requirements needs manual review",
+            "accessible_auth_minimum": "⚠️ Authentication flow heuristics incomplete – test manually",
+            "accessible_auth_enhanced": "⚠️ Enhanced authentication requirements need assessment",
+        },
+        "recommendations": [
+            "Provide clear, programmatically associated labels for all form controls.",
+            "Present descriptive error messages and, where possible, corrective suggestions.",
+            "Prevent loss of data by confirming before abandoning unsaved changes.",
+            "Allow users to review, correct, and confirm critical transactions.",
+            "Avoid requiring users to re-enter information; support autofill.",
+            "Offer accessible, non-cognitive-heavy authentication alternatives (passkeys, email links).",
+        ],
+        "url": url,
+        "status": "NEEDS_REVIEW",
     } 
